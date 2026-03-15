@@ -109,10 +109,10 @@ def load_prompt_file(file):
 
 class Script(scripts.Script):
     def title(self):
-        return "Prompts from file or textbox (ABAB)"
+        return "Prompts from file or textbox (AABB)"
 
     def ui(self, is_img2img):
-        checkbox_iterate = gr.Checkbox(label="Iterate seed every line", value=True, elem_id=self.elem_id("checkbox_iterate"))
+        checkbox_iterate = gr.Checkbox(label="Iterate seed every line", value=False, elem_id=self.elem_id("checkbox_iterate"))
         checkbox_iterate_batch = gr.Checkbox(label="Use same random seed for all lines", value=False, elem_id=self.elem_id("checkbox_iterate_batch"))
         prompt_position = gr.Radio(["start", "end"], label="Insert prompts at the", elem_id=self.elem_id("prompt_position"), value="start")
 
@@ -145,12 +145,9 @@ class Script(scripts.Script):
             else:
                 args = {"prompt": line}
 
-            #job_count += args.get("n_iter", p.n_iter)
+            job_count += args.get("n_iter", p.n_iter)
 
             jobs.append(args)
-
-            original_n_iter = p.n_iter #
-            job_count = len(jobs) * original_n_iter #
 
         print(f"Will process {len(lines)} lines in {job_count} jobs.")
         if (checkbox_iterate or checkbox_iterate_batch) and p.seed == -1:
@@ -161,45 +158,34 @@ class Script(scripts.Script):
         images = []
         all_prompts = []
         infotexts = []
+        for args in jobs:
+            state.job = f"{state.job_no + 1} out of {state.job_count}"
 
-        for j in range(original_n_iter): #
+            copy_p = copy.copy(p)
+            for k, v in args.items():
+                if k == "sd_model":
+                    copy_p.override_settings['sd_model_checkpoint'] = v
+                else:
+                    setattr(copy_p, k, v)
 
-            for args in jobs:
+            if args.get("prompt") and p.prompt:
+                if prompt_position == "start":
+                    copy_p.prompt = args.get("prompt") + " " + p.prompt
+                else:
+                    copy_p.prompt = p.prompt + " " + args.get("prompt")
 
-                if state.interrupted: break #
+            if args.get("negative_prompt") and p.negative_prompt:
+                if prompt_position == "start":
+                    copy_p.negative_prompt = args.get("negative_prompt") + " " + p.negative_prompt
+                else:
+                    copy_p.negative_prompt = p.negative_prompt + " " + args.get("negative_prompt")
 
-                state.job = f"{state.job_no + 1} out of {state.job_count}"
+            proc = process_images(copy_p)
+            images += proc.images
 
-                copy_p = copy.copy(p)
-
-                copy_p.n_iter = 1 #
-                
-                for k, v in args.items():
-                    if k == "sd_model":
-                        copy_p.override_settings['sd_model_checkpoint'] = v
-                    else:
-                        setattr(copy_p, k, v)
-
-                if args.get("prompt") and p.prompt:
-                    if prompt_position == "start":
-                        copy_p.prompt = args.get("prompt") + " " + p.prompt
-                    else:
-                        copy_p.prompt = p.prompt + " " + args.get("prompt")
-
-                if args.get("negative_prompt") and p.negative_prompt:
-                    if prompt_position == "start":
-                        copy_p.negative_prompt = args.get("negative_prompt") + " " + p.negative_prompt
-                    else:
-                        copy_p.negative_prompt = p.negative_prompt + " " + args.get("negative_prompt")
-
-                proc = process_images(copy_p)
-                images += proc.images
-
-                if checkbox_iterate:
-                    p.seed = proc.seed + p.batch_size #
-                all_prompts += proc.all_prompts
-                infotexts += proc.infotexts
-            
-            if state.interrupted: break #
+            if checkbox_iterate:
+                p.seed = p.seed + (p.batch_size * p.n_iter)
+            all_prompts += proc.all_prompts
+            infotexts += proc.infotexts
 
         return Processed(p, images, p.seed, "", all_prompts=all_prompts, infotexts=infotexts)
