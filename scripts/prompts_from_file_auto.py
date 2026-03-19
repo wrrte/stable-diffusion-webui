@@ -31,7 +31,7 @@ def process_float_tag(tag):
 
 
 def process_boolean_tag(tag):
-    return True if (tag == "true") else False
+    return True if (tag.lower() == "true") else False
 
 
 prompt_tags = {
@@ -58,7 +58,14 @@ prompt_tags = {
     "restore_faces": process_boolean_tag,
     "tiling": process_boolean_tag,
     "do_not_save_samples": process_boolean_tag,
-    "do_not_save_grid": process_boolean_tag
+    "do_not_save_grid": process_boolean_tag,
+    "enable_hr": process_boolean_tag,
+    "denoising_strength": process_float_tag,
+    "hr_upscaler": process_string_tag,
+    "hr_scale": process_float_tag,
+    "hr_second_pass_steps": process_int_tag,
+    "hr_resize_x": process_int_tag,
+    "hr_resize_y": process_int_tag
 }
 
 
@@ -169,14 +176,16 @@ class Script(scripts.Script):
         if task_file_path:
             if os.path.exists(task_file_path):
                 with open(task_file_path, "r", encoding="utf-8") as f:
-                    lines = [x for x in (x.strip() for x in f.readlines()) if x]
+                    # 빈 줄을 필터링하지 않고 유지하도록 변경했습니다.
+                    lines = [x.strip() for x in f.readlines()]
             else:
-                lines = [x for x in (x.strip() for x in prompt_txt.splitlines()) if x]
+                lines = [x.strip() for x in prompt_txt.splitlines()]
                 print(f"Task file not found. Falling back to textbox inputs and will create file at: {task_file_path}")
         else:
-            lines = [x for x in (x.strip() for x in prompt_txt.splitlines()) if x]
+            lines = [x.strip() for x in prompt_txt.splitlines()]
 
-        if not lines:
+        # 내용이 있는 프롬프트가 한 줄도 없는지 확인합니다.
+        if not any(line for line in lines):
             print("No prompts found.")
             return Processed(p, [], p.seed, "")
 
@@ -186,11 +195,15 @@ class Script(scripts.Script):
         jobs = []
 
         for line in lines:
+            if not line: # 빈 줄인 경우 마커(None)와 함께 저장하여 순서를 유지합니다.
+                jobs.append((line, None))
+                continue
+                
             args = parse_line_robust(line)
             job_count += args.get("n_iter", p.n_iter)
             jobs.append((line, args))
 
-        print(f"Will process {len(lines)} lines in {job_count} jobs.")
+        print(f"Will process {len([j for j in jobs if j[1] is not None])} lines in {job_count} jobs.")
         if (checkbox_iterate or checkbox_iterate_batch) and p.seed == -1:
             p.seed = int(random.randrange(4294967294))
 
@@ -203,6 +216,11 @@ class Script(scripts.Script):
         uncompleted_jobs = []
 
         for i, (line_str, args) in enumerate(jobs):
+            if not line_str or args is None:
+                # 빈 줄은 이미지 생성 작업 없이 그대로 결과 파일에 추가합니다.
+                uncompleted_jobs.append("")
+                continue
+
             if state.interrupted or state.skipped:
                 uncompleted_jobs.append(line_str)
                 continue
